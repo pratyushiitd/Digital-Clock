@@ -1,0 +1,675 @@
+library IEEE;
+use IEEE.STD_LOGIC_1164.ALL;
+use IEEE.std_logic_unsigned.all;
+--       ___________
+--h1_in--|	   |--h1_out--
+--h2_in--|         |--h2_out--
+--m1_in--|	   |--m1_out--
+--m2_in--|	   |--m2_out--
+--s1_in--|	   |--s1_out--
+--s2_in--|	   |--s2_out--
+--clk----|_________|
+
+--DgtClkEN is used to increment the values of h1,h2,m1,m2,s1,s2 after each one second period
+--h1 is the most significant bit for current hour and h2 is the least. Similarly for minutes and seconds
+--So, the actual time is h1h2:m1m2:s1s2
+
+ENTITY DgtClkEN IS
+PORT (
+	h1_in : IN std_logic_vector (3 DOWNTO 0);
+	h2_in : IN std_logic_vector (3 DOWNTO 0);
+	m1_in : IN std_logic_vector (3 DOWNTO 0);
+	m2_in : IN std_logic_vector (3 DOWNTO 0);
+	s1_in : IN std_logic_vector (3 DOWNTO 0);
+	s2_in : IN std_logic_vector (3 DOWNTO 0);
+	h1_out : OUT std_logic_vector (3 DOWNTO 0);
+	h2_out : OUT std_logic_vector (3 DOWNTO 0);
+	m1_out : OUT std_logic_vector (3 DOWNTO 0);
+	m2_out : OUT std_logic_vector (3 DOWNTO 0);
+	s1_out : OUT std_logic_vector (3 DOWNTO 0);
+	s2_out : OUT std_logic_vector (3 DOWNTO 0);
+	clk : IN std_logic);
+END DgtClkEN;
+
+ARCHITECTURE DgtClkAR OF DgtClkEN IS
+
+--Use the clk_divEN entity to reduce the frequency of master clock from 10MHz to 1Hz
+
+COMPONENT clk_divEN
+PORT (
+ clk_master: IN std_logic;--Master clock
+ clk_1s: OUT std_logic--Output clock which turns ON after regular intervals of 1 second.
+     );
+END COMPONENT;
+
+SIGNAL clk_1s : std_logic;
+BEGIN
+init_clk_1s : clk_divEN port map (clk_master => clk, clk_1s => clk_1s);
+  PROCESS (clk_1s, h1_in, h2_in, m1_in, m2_in, s1_in, s2_in)
+    BEGIN
+    IF (clk_1s = '1' and clk_1s'EVENT) THEN
+      IF (s2_in = "1001") THEN 
+        IF (s1_in = "0101") THEN 			-- if s2 is 9 and s1 is 5, then go on to increment minutes and set s1 and s2 to 00. if s2 is 9 and s1/=5, increment s1 and set s2 to 0.
+	  s2_in <= "0000"; s1_in <= "0000";
+	  IF (m2_in = "1001") THEN 			-- Similarly as in second, check if m2 = 9 and m1 = 5, then go to increment hour and set m1, m2 to 0, 0.
+            IF (m1_in = "0101") THEN
+	      m2_in <= "0000"; m1 <= "0000";
+	      IF (h1_in = "0010") THEN			-- If h1 = 2, check if h2 is 3 or not
+		IF (h2_in = "0011") THEN
+		  h1_in <= "0000"; h2_in <= "0000";
+		ELSE h2_in <= h2_in + 1; END IF;
+	      ELSE					-- Here, else condition (h1 < 2), see if h2 = 9 or not
+		IF (h2_in = "1001") THEN h1_in <= h1_in + 1; h2_in <= "0000";
+		ELSE h2_in <= h2_in + 1; END IF; 
+	      END IF;
+	    ELSE  m1_in <= m1_in + 1; m2_in <= "0000"; END IF;
+          ELSE m2_in <= m2_in + 1; END IF;
+	ELSE  s1_in <= s1_in + 1; s2_in <= "0000"; END IF;
+      ELSE s2_in <= s2_in + 1; END IF;
+    END IF;
+  END PROCESS;
+  h1_out <= h1;
+  h2_out <= h2;
+  m1_out <= m1;
+  m2_out <= m2;
+  s1_out <= s1;
+  s2_out <= s2; 
+END DgtClkAR;
+
+
+
+--       ___________
+--clk_master-|_________|--clk_1s--
+
+--ckk_div is used to obtain lower frequency clock (1Hz) from Master clock (10Mhz)
+ENTITY clk_divEN IS
+port (
+	clk_master : IN std_logic;
+    clk_1s : OUT std_logic);
+END clk_divEN;
+
+ARCHITECTURE clk_divAR OF clk_divEN IS
+SIGNAL counter : std_logic_vector (23 DOWNTO 0);
+--Maintain a counter which counter upto maximum value of 10**7 and returns output signal 1, else returns output signal 0
+BEGIN
+  PROCESS(clk_master)
+    BEGIN
+      IF (clk_master = '1' and clk_master'EVENT) THEN
+	    counter <= counter + 1;
+      END IF;
+      IF (counter = "100110001001011010000000") THEN
+	  counter <= "000000000000000000000000";
+      END IF;
+  END PROCESS;
+  clk_1s <= '1' WHEN counter = "000000000000000000000000" ELSE "0";
+
+END clk_divAR;
+
+
+
+
+ENTITY BCDtoSevenSegmentEN IS
+PORT(
+	D : IN std_logic_vector (3 DOWNTO 0);
+	Segment_A : OUT std_logic;
+	Segment_B : OUT std_logic;
+	Segment_C : OUT std_logic;
+	Segment_D : OUT std_logic;
+	Segment_E : OUT std_logic;
+	Segment_F : OUT std_logic;
+	Segment_G : OUT std_logic);
+END BCDtoSevenSegmentEN;
+
+ARCHITECTURE BCDtoSevenSegmentAR OF BCDtoSevenSegmentEN IS
+SIGNAL temp : std_logic_vector (6 DOWNTO 0);
+BEGIN
+  PROCESS (D)
+    BEGIN
+      Case D IS
+      WHEN "0000" => temp <= "1111110"; -- 1 represents which segment to turn ON for displaying the corresponding digits
+      WHEN "0001" => temp <= "0110000";
+      WHEN "0010" => temp <= "1101101";
+      WHEN "0011" => temp <= "1111001";
+      WHEN "0100" => temp <= "0110011";
+      WHEN "0101" => temp <= "1011011";
+      WHEN "0110" => temp <= "1011111";
+      WHEN "0111" => temp <= "1110000";
+      WHEN "1000" => temp <= "1111111";
+      WHEN "1001" => temp <= "1111011";
+      WHEN OTHERS => temp <= "0000000" ;
+      END Case;
+      Segment_A <= temp(6 DOWNTO 6);    -- Assign bit values to all the segments
+      Segment_B <= temp(5 DOWNTO 5);
+      Segment_C <= temp(4 DOWNTO 4);
+      Segment_D <= temp(3 DOWNTO 3);
+      Segment_E <= temp(2 DOWNTO 2);
+      Segment_F <= temp(1 DOWNTO 1);
+      Segment_G <= temp(0 DOWNTO 0);
+    END PROCESS;
+END BCDtoSevenSegmentAR;
+
+
+--clk_div_refreshEN is used to drive a clock having time period 3.2 seconds for refreshing the values being displayed. 3.2 * 4 = 12.8 is the overall period.
+
+ENTITY clk_div_refreshEN IS
+PORT(
+	clk_master : IN std_logic;
+	selectt: IN std_logic_vector (1 DOWNTO 0); --INPUT--selecttis used to selecttone out of 4 digits for displaying
+	clk_ref : OUT std_logic;
+	dig_out : OUT std_logic (1 DOWNTO 0) --assigned updated selecttvalue after each refresh period.
+	);
+END clk_div_refreshEN;
+
+ARCHITECTURE clk_div_refreshAR OF clk_div_refreshEN IS
+Signal clk_temp : std_logic ;
+Signal count : std_logic_vector (15 DOWNTO 0);
+BEGIN
+  PROCESS (clk_master, selectt)
+    IF (clk_master = '1' and clk_master'EVENT) THEN
+      count <= count + 1;
+	IF (count(15 DOWNTO 15) = '1') THEN -- when count = "1000000000000000", trigger the output clock ON and update the value of select
+	  clk_temp <= '1';
+	  count <= ( others => '0'); -- reset the count value to 0.
+	END IF;
+    IF (clk_temp = '1') THEN
+      IF (selectt= "11") THEN selectt<= "00";
+      ELSE selectt<= selectt+ 1;END IF;
+    END IF;
+  END IF;
+      clk_ref <= clk_temp;
+    dig_out <= selectt;
+  END PROCESS;
+END clk_div_refreshAR;
+
+
+
+
+
+--DeMuxEN Takes in 4 display values and selecttone out of then using the above refresh clock and selector input
+--       ___________
+--Disp_A-|	   |
+--Disp_B-|         |--Disp_out--
+--Disp_C-|	   |
+--Disp_D-|	   |
+--clk----|	   |--ack_out -- 4 bit vector for acknowledging which output of of the 4 is selected
+--selctor|	   |
+--	 |_________|
+ENTITY DeMuxEN IS
+PORT(
+	clk : IN std_logic;
+	Disp_A : IN std_logic_vector (3 DOWNTO 0);
+	Disp_B : IN std_logic_vector (3 DOWNTO 0);
+	Disp_C : IN std_logic_vector (3 DOWNTO 0);
+	Disp_D : IN std_logic_vector (3 DOWNTO 0);
+	selector : IN std_logic_vector (1 DOWNTO 0);
+	Disp_out : OUT std_logic_vector (3 DOWNTO 0);
+	ack_out : OUT std_logic_vector (3 DOWNTO 0)
+);
+END DeMuxEN;
+
+ARCHITECTURE DeMuxAR OF DeMuxEN IS
+SIGNAL temp : std_logic_vector (3 DOWNTO 0);
+BEGIN
+  PROCESS(clk, Disp_A, Disp_B, Disp_C, Disp_D, selector)
+    BEGIN
+      IF rising_edge(clk) THEN 
+	CASE selector IS
+	  WHEN "00" => temp <= Disp_A; ack_out <= "1000";
+	  WHEN "01" => temp <= Disp_B; ack_out <= "0100";
+	  WHEN "10" => temp <= Disp_C; ack_out <= "0010";
+	  WHEN "11" => temp <= Disp_D; ack_out <= "0001";
+	END CASE;
+      END IF;
+    Disp_out <= temp;
+  END PROCESS;
+END DeMuxAR;
+
+
+	
+
+
+--PushButtonsEN for All the operation for changing the mode from HH:MM to MM:SS or vice versa and incrementing the digits on push of buttons 
+ENTITY PushButtonsEN IS
+PORT (
+	b0 : IN std_logic;
+	b1 : IN std_logic;
+	b2 : IN std_logic;
+	b3 : IN std_logic;
+	b4 : IN std_logic;
+	h1_in : IN std_logic_vector (3 DOWNTO 0);--Initial values of h1,h2,m1,m2,s1,s2;
+	h2_in : IN std_logic_vector (3 DOWNTO 0);
+	m1_in : IN std_logic_vector (3 DOWNTO 0);
+	m2_in : IN std_logic_vector (3 DOWNTO 0);
+	s1_in : IN std_logic_vector (3 DOWNTO 0);
+	s2_in : IN std_logic_vector (3 DOWNTO 0);
+	clk : IN std_logic;
+	mode_in : IN std_logic;
+	mode : OUT std_logic;				--if mode = 1, display HH:MM else displaying MM:SS
+	h1_out : OUT std_logic_vector (3 DOWNTO 0);--updated values of h1,h2,m1,m2,s1,s2 based on operations done by push buttons
+	h2_out : OUT std_logic_vector (3 DOWNTO 0);
+	m1_out : OUT std_logic_vector (3 DOWNTO 0);
+	m2_out : OUT std_logic_vector (3 DOWNTO 0);
+	s1_out : OUT std_logic_vector (3 DOWNTO 0);
+	s2_out : OUT std_logic_vector (3 DOWNTO 0);
+	init_st : IN std_logic (4 DOWNTO 0); 	   --Instead of using FSM state, init_st stores the current state of the system, where '1' in init_st corresponds to current state (or current button pushed)
+	final_st : OUT std_logic (4 DOWNTO 0) -- updated value of init_st to be sent again in the Circuit
+);
+END PushButtonsEN;
+
+--Here, It is assumed that only one button is pressed at a single go and there is atleast some nano seconds delay before the next
+--button is pressed.
+
+ARCHITECTURE PushButtonsAR OF PushButtonsEN IS
+BEGIN
+  PROCESS (clk, b0, b1, b2, b3, b4, h1_in, h2_in, m1_in, m2_in, s1_in, s2_in, init_st)
+    BEGIN
+      mode <= mode_in;
+
+--check if presently b0 is pressed and initally not pressed 
+--(button is pressed for some miliseconds and clock has time period of the
+--order of nano seconds, so to avoid mis interpretation as multiple pressings, inital state values are stored in string init_st)
+
+      IF (b0 = '1' and init_st (4 DOWNTO 4) = '0') THEN 	--b0 pressed and initially not in state 0
+	mode <= not mode_in; final_st <= "10000"; 		--update final state to '10000' indicating that present state is 0.
+      ELSE IF (b0 = '0') THEN 					--If b0=1 and initally also is state 0, do nothing else see other button values.
+	IF mode = '1' THEN
+
+	--Taking into account that mode is 1, b1, b2, b3, b4 are used for updating h1, h2, m1, m2 respectively.
+
+	  IF (b1 = '1' and init_st (3 DOWNTO 3) = '0') THEN	
+	    IF (h1_in = "0010") h1_in <= "0000" ELSE h1_in <= h1_in + 1;final_st <= "01000";END IF;
+	  ELSE IF (b1 = '0') THEN
+	    IF (b2 = '1' and init_st (2 DOWNTO 2) = '0') THEN
+	      IF (h1_in = "0010") THEN						--for Updating hours, check if h1 is 2 and see corresponding value of h2 as did in ENTITY DgtClk for updating time 
+	        IF (h2_in = "0011") h2_in <= "0000" ELSE h2_in <= h2_in + 1;final_st <= "00100";END IF;
+	      ELSE
+	        IF (h2_in = "1001") h2_in <= "0000" ELSE h2_in <= h2_in + 1;final_st <= "00100";END IF;
+	    ELSE IF (b2 = '0') THEN
+	      IF (b3 = '1' and init_st (1 DOWNTO 1) = '0') THEN
+	        IF (m1_in = "0101") m1_in <= "0000" ELSE m1_in <= m1_in + 1;final_st <= "00010";END IF;
+	      ELSE IF (b3 = '0') THEN
+	        IF (b4 = '1' and init_st (0 DOWNTO 0) = '0') THEN
+		  IF (m2_in = "1001") m2_in <= "0000" ELSE m2_in <= m2_in + 1;final_st <= "00001"; END IF;
+		ELSE IF (b4 = '0') THEN
+		  final_st <= "00000";
+	    	END IF;
+        END IF;
+       END IF;
+	  END IF;
+	ELSE
+
+	--Taking into account that mode is 0, b1, b2, b3, b4 are used for updating m1, m2, s1, s2 respectively.
+
+	  IF (b1 = '1' and init_st (3 DOWNTO 3) = '0') THEN
+	    IF (m1_in = "0101") m1_in <= "0000" ELSE m1_in <= m1_in + 1;final_st <= "01000";END IF;
+	  ELSE IF (b1 = '0') THEN
+	    IF (b2 = '1' and init_st (2 DOWNTO 2) = '0') THEN
+	      IF (m2_in = "1001") m2_in <= "0000" ELSE m2_in <= m2_in + 1;final_st <= "00100";END IF;
+	    ELSE IF (b2 = '0') THEN
+	      IF (b3 = '1' and init_st (1 DOWNTO 1) = '0') THEN
+	        IF (s1_in = "0101") s1_in <= "0000" ELSE s1_in <= s1_in + 1;final_st <= "00010";END IF;
+	      ELSE IF (b3 = '0') THEN
+	        IF (b4 = '1' and init_st (0 DOWNTO 0) = '0') THEN
+		  IF (s2_in = "1001") s2_in <= "0000" ELSE s2_in <= s2_in + 1;final_st <= "00001"; END IF;
+		ELSE IF (b4 = '0') THEN
+		  final_st <= "00000";
+		END IF;
+      END IF;
+        END IF;
+	  END IF;
+	END IF;
+  END IF;
+      h1_out <= h1_in;
+      h2_out <= h2_in;
+      m1_out <= m1_in;
+      m2_out <= m2_in;
+      s1_out <= s1_in;
+      s2_out <= s2_in;	
+  END PROCESS;
+END PushButtonsAR;
+
+
+
+--toDisplay is used to selecttwhich 4 digits are to be displayed out of h1, h2, m1, m2, s1, s2 depending on the value of mode
+ENTITY toDisplayEN IS
+PORT  (
+	h1_in : IN std_logic_vector (3 DOWNTO 0);
+	h2_in : IN std_logic_vector (3 DOWNTO 0);
+	m1_in : IN std_logic_vector (3 DOWNTO 0);
+	m2_in : IN std_logic_vector (3 DOWNTO 0);
+	s1_in : IN std_logic_vector (3 DOWNTO 0);
+	s2_in : IN std_logic_vector (3 DOWNTO 0);
+	mode_in : IN std_logic;
+	Disp_A : OUT std_logic_vector (3 DOWNTO 0);
+	Disp_B : OUT std_logic_vector (3 DOWNTO 0);
+	Disp_C : OUT std_logic_vector (3 DOWNTO 0);
+	Disp_D : OUT std_logic_vector (3 DOWNTO 0)
+);
+END toDisplayEN;
+
+ARCHITECTURE toDisplayAR OF toDisplayEN IS
+BEGIN
+PROCESS
+BEGIN 
+  CASE mode_in IS
+    WHEN '1' => Disp_A <= h1_in; Disp_B <= h2_in; Disp_C <= m1_in; Disp_D <= m2_in;
+    WHEN OTHERS => Disp_A <= m1_in; Disp_B <= m2_in; Disp_C <= s1_in; Disp_D <= s2_in;
+  END CASE;
+END PROCESS;
+END toDisplayAR;
+
+
+--SegmentDisplay takes in 4 display values and outputs 4 anode and 7 cathode values, at a period of refresh rate (3.2 seconds)
+--Each cathode values demonstrated which segments to light up for displaying that particular digit.
+--Each anode value demonstrates which all node to be kept high and low for displaying that digit.
+--Note: One digit is displayed at a time with refresh rate 3.2 seconds.
+
+ENTITY SegmentDisplayEN IS
+PORT (
+	Disp_A : IN std_logic_vector (3 DOWNTO 0);
+	Disp_B : IN std_logic_vector (3 DOWNTO 0);
+	Disp_C : IN std_logic_vector (3 DOWNTO 0);
+	Disp_D : IN std_logic_vector (3 DOWNTO 0);
+	Seg_A : OUT std_logic;
+	Seg_B : OUT std_logic;
+	Seg_C : OUT std_logic;
+	Seg_D : OUT std_logic;
+	Seg_E : OUT std_logic;
+	Seg_F : OUT std_logic;
+	Seg_G : OUT std_logic;
+	disp_ack_A : OUT std_logic;
+	disp_ack_B : OUT std_logic;
+	disp_ack_C : OUT std_logic;
+	disp_ack_D : OUT std_logic;
+	select_in : IN std_logic;
+	clk : IN std_logic
+	);
+END SegmentDisplayEN;
+
+ARCHITECTURE SegmentDisplayAR OF SegmentDisplayEN IS
+
+COMPONENT clk_div_refreshEN
+PORT(
+	clk_master : IN std_logic;
+	selectt: IN std_logic_vector (1 DOWNTO 0);
+	clk_ref : OUT std_logic;
+	dig_out : OUT std_logic (1 DOWNTO 0)
+	);
+END COMPONENT;
+
+COMPONENT BCDtoSevenSegmentEN
+PORT(
+	D : IN std_logic_vector (3 DOWNTO 0);
+	Segment_A : OUT std_logic;
+	Segment_B : OUT std_logic;
+	Segment_C : OUT std_logic;
+	Segment_D : OUT std_logic;
+	Segment_E : OUT std_logic;
+	Segment_F : OUT std_logic;
+	Segment_G : OUT std_logic);
+END COMPONENT;
+
+COMPONENT DeMuxEN
+PORT(
+	clk : IN std_logic;
+	Disp_A : IN std_logic_vector (3 DOWNTO 0);
+	Disp_B : IN std_logic_vector (3 DOWNTO 0);
+	Disp_C : IN std_logic_vector (3 DOWNTO 0);
+	Disp_D : IN std_logic_vector (3 DOWNTO 0);
+	selector : IN std_logic_vector (1 DOWNTO 0);
+	Disp_out : OUT std_logic_vector (3 DOWNTO 0);
+	ack_out : OUT std_logic_vector (3 DOWNTO 0)
+);
+END COMPONENT;
+
+SIGNAL select_out : std_logic_vector (1 DOWNTO 0);
+SIGNAL temp_bin : std_logic_vector (3 DOWNTO 0);
+SIGNAL clk_out : std_logic;
+SIGNAL disp_ack : std_logic_vector (3 DOWNTO 0);
+
+BEGIN
+  PROCESS (clk, Disp_A, Disp_B, Disp_C, Disp_D)
+    BEGIN
+	im1 : clk_div_refreshEN PORT MAP (
+		clk_master => clk;
+		selectt=> select_in;
+		select_out => dig_out;
+		clk_out => clk_ref
+	);
+
+	im2 : DeMuxEN PORT MAP(
+		clk => clk_out;
+		Disp_A => Disp_A;
+		Disp_B => Disp_B;
+		Disp_C => Disp_C;
+		Disp_D => Disp_D;
+		selector => select_out;
+		temp_bin => Disp_out;
+		disp_ack => ack_out
+	);
+	
+	im3 : BCDtoSevenSegmentEN PORT MAP(
+		D => temp_bin;
+		Seg_A => Segment_A;
+		Seg_B => Segment_B;
+		Seg_C => Segment_C;
+		Seg_D => Segment_D;
+		Seg_E => Segment_E;
+		Seg_F => Segment_F;
+		Seg_G => Segment_G
+	);
+    disp_ack_A <= not disp_ack (3 DOWNTO 3); --0111 demonstrates first anode to be kept low and other high, i.e. LED1 is turned on and LED2, LED3, LED4 are off.
+    disp_ack_B <= not disp_ack (2 DOWNTO 2); --1011
+    disp_ack_C <= not disp_ack (1 DOWNTO 1); --1101
+    disp_ack_D <= not disp_ack (0 DOWNTO 0); --1110
+  END PROCESS;
+END SegmentDisplayAR;
+
+
+
+--Main Entity of Digital clock using each component described above.
+ENTITY DIGITALCLOCKEN IS
+PORT(
+	b0 : IN std_logic;
+	b1 : IN std_logic;	
+	b2 : IN std_logic;
+	b3 : IN std_logic;
+	b4 : IN std_logic;
+	clk : IN std_logic;
+	SegA : IN std_logic;
+	SegB : IN std_logic;
+	SegC : IN std_logic;
+	SegD : IN std_logic;
+	SegE : IN std_logic;
+	SegF : IN std_logic;
+	SegG : IN std_logic;
+	Disp_ack_A : IN std_logic;
+	Disp_ack_B : IN std_logic;
+	Disp_ack_C : IN std_logic;
+	Disp_ack_D : IN std_logic
+);
+END DIGITALCLOCKEN;
+
+ARCHITECTURE DIGITALCLOCKAR OF DIGITALCLOCKEN IS
+COMPONENT SegmentDisplayEN
+PORT (
+	Disp_A : IN std_logic_vector (3 DOWNTO 0);
+	Disp_B : IN std_logic_vector (3 DOWNTO 0);
+	Disp_C : IN std_logic_vector (3 DOWNTO 0);
+	Disp_D : IN std_logic_vector (3 DOWNTO 0);
+	Seg_A : OUT std_logic;
+	Seg_B : OUT std_logic;
+	Seg_C : OUT std_logic;
+	Seg_D : OUT std_logic;
+	Seg_E : OUT std_logic;
+	Seg_F : OUT std_logic;
+	Seg_G : OUT std_logic;
+	disp_ack_A : OUT std_logic;
+	disp_ack_B : OUT std_logic;
+	disp_ack_C : OUT std_logic;
+	disp_ack_D : OUT std_logic;
+	select_in : IN std_logic;
+	clk : IN std_logic
+	);
+END COMPONENT;
+
+COMPONENT toDisplayEN
+PORT  (
+	h1_in : IN std_logic_vector (3 DOWNTO 0);
+	h2_in : IN std_logic_vector (3 DOWNTO 0);
+	m1_in : IN std_logic_vector (3 DOWNTO 0);
+	m2_in : IN std_logic_vector (3 DOWNTO 0);
+	s1_in : IN std_logic_vector (3 DOWNTO 0);
+	s2_in : IN std_logic_vector (3 DOWNTO 0);
+	mode_in : IN std_logic;
+	Disp_A : OUT std_logic_vector (3 DOWNTO 0);
+	Disp_B : OUT std_logic_vector (3 DOWNTO 0);
+	Disp_C : OUT std_logic_vector (3 DOWNTO 0);
+	Disp_D : OUT std_logic_vector (3 DOWNTO 0)
+);
+END COMPONENT;
+
+COMPONENT DgtClkEN
+PORT (
+	h1_in : IN std_logic_vector (3 DOWNTO 0);
+	h2_in : IN std_logic_vector (3 DOWNTO 0);
+	m1_in : IN std_logic_vector (3 DOWNTO 0);
+	m2_in : IN std_logic_vector (3 DOWNTO 0);
+	s1_in : IN std_logic_vector (3 DOWNTO 0);
+	s2_in : IN std_logic_vector (3 DOWNTO 0);
+	h1_out : OUT std_logic_vector (3 DOWNTO 0);
+	h2_out : OUT std_logic_vector (3 DOWNTO 0);
+	m1_out : OUT std_logic_vector (3 DOWNTO 0);
+	m2_out : OUT std_logic_vector (3 DOWNTO 0);
+	s1_out : OUT std_logic_vector (3 DOWNTO 0);
+	s2_out : OUT std_logic_vector (3 DOWNTO 0);
+	clk : IN std_logic);
+END COMPONENT;
+
+COMPONENT PushButtonsEN
+PORT (
+	b0 : IN std_logic;
+	b1 : IN std_logic;
+	b2 : IN std_logic;
+	b3 : IN std_logic;
+	b4 : IN std_logic;
+	h1_in : IN std_logic_vector (3 DOWNTO 0);
+	h2_in : IN std_logic_vector (3 DOWNTO 0);
+	m1_in : IN std_logic_vector (3 DOWNTO 0);
+	m2_in : IN std_logic_vector (3 DOWNTO 0);
+	s1_in : IN std_logic_vector (3 DOWNTO 0);
+	s2_in : IN std_logic_vector (3 DOWNTO 0);
+	clk : IN std_logic;
+	mode_in : IN std_logic;
+	mode : OUT std_logic;
+	h1_out : OUT std_logic_vector (3 DOWNTO 0);
+	h2_out : OUT std_logic_vector (3 DOWNTO 0);
+	m1_out : OUT std_logic_vector (3 DOWNTO 0);
+	m2_out : OUT std_logic_vector (3 DOWNTO 0);
+	s1_out : OUT std_logic_vector (3 DOWNTO 0);
+	s2_out : OUT std_logic_vector (3 DOWNTO 0);
+	init_st : IN std_logic (4 DOWNTO 0);
+	final_st : OUT std_logic (4 DOWNTO 0)
+);
+END COMPONENT;
+
+SIGNAL h1_in : std_logic_vector (3 DOWNTO 0);
+SIGNAL h2_in : std_logic_vector (3 DOWNTO 0);
+SIGNAL m1_in : std_logic_vector (3 DOWNTO 0);
+SIGNAL m2_in : std_logic_vector (3 DOWNTO 0);
+SIGNAL s1_in : std_logic_vector (3 DOWNTO 0);
+SIGNAL s2_in : std_logic_vector (3 DOWNTO 0);
+SIGNAL h1 : std_logic_vector (3 DOWNTO 0);
+SIGNAL h2 : std_logic_vector (3 DOWNTO 0);
+SIGNAL m1 : std_logic_vector (3 DOWNTO 0);
+SIGNAL m2 : std_logic_vector (3 DOWNTO 0);
+SIGNAL s1 : std_logic_vector (3 DOWNTO 0);
+SIGNAL s2 : std_logic_vector (3 DOWNTO 0);
+SIGNAL mode_in : std_logic;
+SIGNAL mode : std_logic;
+SIGNAL selectt: std_logic_vector (1 DOWNTO 0);
+SIGNAL init_st : std_logic_vector (1 DOWNTO 0);
+SIGNAL final_st : std_logic_vector (1 DOWNTO 0);
+SIGNAL Disp_A : std_logic_vector (3 DOWNTO 0);
+SIGNAL Disp_B : std_logic_vector (3 DOWNTO 0);
+SIGNAL Disp_C : std_logic_vector (3 DOWNTO 0);
+SIGNAL Disp_D : std_logic_vector (3 DOWNTO 0);
+BEGIN
+  PROCESS (clk, b0, b1, b2, b3, b4)
+    BEGIN
+	  imp1 : PushButtonsEN PORT MAP(
+		b0 => b0;
+		b1 => b1;
+		b2 => b2;
+		b3 => b3;
+		b4 => b4;
+		h1_in => h1_in;
+		h2_in => h2_in;
+		m1_in => m1_in;
+		m2_in => m2_in;
+		s1_in => s1_in;
+		s2_in => s2_in;
+		clk => clk;
+		mode_in => mode;
+		init_st => final_st;
+		h1 => h1_out;
+		h2 => h2_out;
+		m1 => m1_out;
+		m2 => m2_out;
+		s1 => s1_out;
+		s2 => s2_out;
+		mode => mode;
+		final_st => final_st;
+	);
+	imp2 : DgtClkEN PORT MAP(
+		h1_in => h1;
+		h2_in => h2;
+		m1_in => m1;
+		m2_in => m2;
+		s1_in => s1;
+		s2_in => s2;
+		clk => clk;
+		h1_in => h1_out;
+		h2_in => h2_out;
+		m1_in => m1_out;
+		m2_in => m2_out;
+		s1_in => s1_out;
+		s2_in => s2_out
+	);
+
+	imp3 : toDisplayEN PORT MAP(
+		h1_in => h1_in;
+		h2_in => h2_in;
+		m1_in => m1_in;
+		m2_in => m2_in;
+		s1_in => s1_in;
+		s2_in => s2_in;
+		clk => clk;
+		mode_in => mode;
+		Disp_A => Disp_A;
+		Disp_B => Disp_B;
+		Disp_C => Disp_C;
+		Disp_D => Disp_D
+	);
+
+	imp4 : SegmentDisplayEN PORT MAP(
+		Disp_A => Disp_A;
+		Disp_B => Disp_B;
+		Disp_C => Disp_C;
+		Disp_D => Disp_D;
+		clk => clk;
+		select_in => select;
+		SegA => Seg_A;
+		SegB => Seg_B;
+		SegC => Seg_C;
+		SegD => Seg_D;
+		SegE => Seg_E;
+		SegF => Seg_F;
+		SegG => Seg_F;
+		Disp_ack_A => disp_ack_A;
+		Disp_ack_B => disp_ack_B;
+		Disp_ack_C => disp_ack_C;
+		Disp_ack_D => disp_ack_D
+	);
+  END PROCESS;
+END DIGITALCLOCKAR;
